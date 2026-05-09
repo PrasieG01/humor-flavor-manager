@@ -1,20 +1,33 @@
 'use client'
 import { useTheme } from 'next-themes'
-import { Moon, Sun, Monitor } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { Moon, Sun } from 'lucide-react'
 
 export default function ThemeToggle() {
-  const { setTheme, theme } = useTheme()
+  const { theme, setTheme, resolvedTheme } = useTheme()
   const [mounted, setMounted] = useState(false)
 
-  useEffect(() => setMounted(true), [])
-  if (!mounted) return null
+  // This ensures the component waits for the browser to load before checking the theme
+  // (Prevents annoying flashing errors in Next.js)
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  if (!mounted) {
+    // Return a blank box of the same size while loading so the UI doesn't jump
+    return <div className="w-8 h-8 p-2"></div>
+  }
+
+  // resolvedTheme checks if the system is dark, even if the user hasn't clicked anything yet
+  const isDark = resolvedTheme === 'dark'
 
   return (
-    <div className="flex gap-2 bg-gray-200 dark:bg-slate-800 p-1 rounded-full">
-      <button onClick={() => setTheme('light')} className={`p-2 rounded-full ${theme === 'light' ? 'bg-white text-black shadow' : 'text-gray-500'}`}><Sun size={18} /></button>
-      <button onClick={() => setTheme('system')} className={`p-2 rounded-full ${theme === 'system' ? 'bg-white dark:bg-slate-700 text-black dark:text-white shadow' : 'text-gray-500'}`}><Monitor size={18} /></button>
-      <button onClick={() => setTheme('dark')} className={`p-2 rounded-full ${theme === 'dark' ? 'bg-slate-700 text-white shadow' : 'text-gray-500'}`}><Moon size={18} /></button>
-    </div>
+    <button
+      onClick={() => setTheme(isDark ? 'light' : 'dark')}
+      className="p-2 border border-zinc-300 dark:border-zinc-700 rounded hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-colors text-zinc-600 dark:text-zinc-400"
+      title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
+    >
+      {isDark ? <Sun size={16} /> : <Moon size={16} />}
+    </button>
   )
 }
