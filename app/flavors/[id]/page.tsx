@@ -61,7 +61,7 @@ export default function FlavorDetails({ params }: { params: { id: string } }) {
         </button>
       </div>
 
-      {isTesting && <TestFlavorEngine steps={steps} />}
+      {isTesting && <TestFlavorEngine flavor={flavor} steps={steps} />}
 
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border dark:border-slate-800 p-6">
         <form onSubmit={addStep} className="flex gap-4 mb-8">
