@@ -2,7 +2,86 @@
 import { createClient } from "@/utils/supabase/server"
 import { revalidatePath } from "next/cache"
 
-// --- FLAVOR CRUD ---
+// --- FETCH DATA (NEW FOR THE LAB) ---
+export async function getImages(page: number = 1, limit: number = 20) {
+  const supabase = await createClient()
+  
+  // Calculate the 0-indexed range for Supabase
+  const from = (page - 1) * limit
+  const to = from + limit - 1
+
+  const { data, error, count } = await supabase
+    .from('images')
+    .select('id, url, image_description, created_datetime_utc', { count: 'exact' })
+    .order('created_datetime_utc', { ascending: false })
+    .range(from, to)
+
+  if (error) throw new Error(error.message)
+
+  return {
+    data: data || [],
+    totalCount: count || 0,
+    hasMore: count ? to < count - 1 : false
+  }
+}
+
+export async function getFlavors() {
+  const supabase = await createClient()
+  const { data, error } = await supabase.from('humor_flavors').select('*')
+  if (error) throw new Error(error.message)
+  return data
+}
+
+export async function duplicateFlavor(flavorId: string) {
+  const supabase = await createClient()
+
+  const { data: original, error } = await supabase
+    .from('humor_flavors')
+    .select('*')
+    .eq('id', flavorId)
+    .single()
+
+  if (error || !original) return { success: false, error: error?.message }
+
+  const { data: newFlavor, error: insertError } = await supabase
+    .from('humor_flavors')
+    .insert([{ slug: original.slug + '_COPY', description: original.description }])
+    .select()
+    .single()
+
+  if (insertError || !newFlavor) return { success: false, error: insertError?.message }
+
+  const { data: steps } = await supabase
+    .from('humor_flavor_steps')
+    .select('*')
+    .eq('humor_flavor_id', flavorId)
+
+  if (steps && steps.length > 0) {
+    const copiedSteps = steps.map(({ id, ...step }) => ({
+      ...step,
+      humor_flavor_id: newFlavor.id,
+    }))
+    await supabase.from('humor_flavor_steps').insert(copiedSteps)
+  }
+
+  revalidatePath('/')
+  return { success: true, newFlavor }
+}
+
+
+
+export async function getStepsForFlavor(flavorId: string) {
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from('humor_flavor_steps')
+    .select('*')
+    .eq('humor_flavor_id', flavorId)
+    .order('order_by', { ascending: true })
+  if (error) throw new Error(error.message)
+  return data
+}
+
+// --- FLAVOR CRUD (EXISTING) ---
 export async function createFlavor(formData: FormData) {
   const supabase = await createClient()
   const slug = formData.get('slug') as string
@@ -23,23 +102,20 @@ export async function updateFlavor(id: string, slug: string) {
 
 export async function deleteFlavor(id: string) {
   const supabase = await createClient()
-  // Note: Depending on your DB settings, you might need to delete steps first 
-  // if you don't have "Cascade Delete" turned on.
   await supabase.from('humor_flavor_steps').delete().eq('humor_flavor_id', id)
   await supabase.from('humor_flavors').delete().eq('id', id)
   revalidatePath('/')
 }
 
-// --- STEP CRUD ---
+// --- STEP CRUD (EXISTING) ---
 export async function createStep(flavorId: string, order: number) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  // 1. THE TRICK: Fetch an existing step to "steal" its valid foreign keys
   const { data: referenceStep } = await supabase
     .from('humor_flavor_steps')
     .select('llm_input_type_id, llm_output_type_id, llm_model_id, humor_flavor_step_type_id')
-    .not('llm_input_type_id', 'is', null) // Make sure we grab one that actually has the data
+    .not('llm_input_type_id', 'is', null) 
     .limit(1)
     .single()
 
@@ -48,7 +124,6 @@ export async function createStep(flavorId: string, order: number) {
     return { error: "Missing reference IDs" }
   }
 
-  // 2. Perform the Insert using the copied IDs
   const { data, error } = await supabase.from('humor_flavor_steps').insert([{ 
     humor_flavor_id: flavorId, 
     order_by: order,
@@ -57,7 +132,6 @@ export async function createStep(flavorId: string, order: number) {
     llm_temperature: 0.7,
     created_by_user_id: user?.id,
     
-    // Inject the required NOT NULL columns using our reference step
     llm_input_type_id: referenceStep.llm_input_type_id,
     llm_output_type_id: referenceStep.llm_output_type_id,
     llm_model_id: referenceStep.llm_model_id,
@@ -85,38 +159,12 @@ export async function deleteStep(id: string) {
   revalidatePath('/')
 }
 
-// --- THE REORDER LOGIC ---
+// --- THE REORDER LOGIC (EXISTING) ---
 export async function reorderSteps(stepIds: string[]) {
   const supabase = await createClient()
-  // We loop through the IDs in their new order and update the order_by column
   const updates = stepIds.map((id, index) => 
     supabase.from('humor_flavor_steps').update({ order_by: index + 1 }).eq('id', id)
   )
   await Promise.all(updates)
   revalidatePath('/')
-}
-
-// In actions/prompt-chains.ts — only do steps 1-3
-export async function getTestImageId(): Promise<{ imageId?: string, error?: string, token?: string }> {
-  const supabase = await createClient();
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session?.access_token) return { error: "Not logged in" };
-
-  const token = session.access_token;
-  const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
-
-  const presignRes = await fetch('https://api.almostcrackd.ai/pipeline/generate-presigned-url', {
-    method: 'POST', headers, body: JSON.stringify({ contentType: 'image/jpeg' })
-  });
-  const { presignedUrl, cdnUrl } = await presignRes.json();
-
-  const imageBlob = await (await fetch('https://placehold.co/600x400.jpg')).blob();
-  await fetch(presignedUrl, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: imageBlob });
-
-  const registerRes = await fetch('https://api.almostcrackd.ai/pipeline/upload-image-from-url', {
-    method: 'POST', headers, body: JSON.stringify({ imageUrl: cdnUrl, isCommonUse: false })
-  });
-  const { imageId } = await registerRes.json();
-
-  return { imageId, token }; // send token back to client for step 4
 }
