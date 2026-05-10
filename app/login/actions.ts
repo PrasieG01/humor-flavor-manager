@@ -2,18 +2,16 @@
 
 import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
+import { headers } from 'next/headers'
 
 export async function signInWithGoogle() {
   const supabase = await createClient()
-  
-  // We need to tell Google where to send the user back to.
-  // In development, this is localhost. In production, Vercel will handle it.
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
+  const origin = (await headers()).get('origin')
 
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      redirectTo: `${siteUrl}/auth/callback`,
+      redirectTo: `${origin}/auth/callback`,
     },
   })
 
@@ -22,7 +20,7 @@ export async function signInWithGoogle() {
   }
 
   if (data.url) {
-    redirect(data.url) // This actually sends them to the Google login screen
+    redirect(data.url)
   }
 }
 
